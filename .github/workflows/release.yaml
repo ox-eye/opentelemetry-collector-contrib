@@ -2,7 +2,9 @@
 name: Release
 on:
   push:
-    branches: [main]
+    # branches: [main]
+permissions:
+  contents: write
 jobs:
   release:
     name: Release
@@ -14,5 +16,5 @@ jobs:
       - name: Create Git Tag
         uses: anothrNick/github-tag-action@1.55.0
         env:
-          GITHUB_TOKEN: ${{ github.token }}
+          GITHUB_TOKEN: ${{ secrets.PROJECT_GITHUB_TOKEN }}
           WITH_V: true
