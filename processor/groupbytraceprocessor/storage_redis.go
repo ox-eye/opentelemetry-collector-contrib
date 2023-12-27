@@ -10,6 +10,7 @@ import (
 	"github.com/go-redis/cache/v9"
 	"github.com/redis/go-redis/v9"
 
+	"github.com/bsm/redislock"
 	"go.opencensus.io/stats"
 	"go.opentelemetry.io/collector/pdata/pcommon"
 	"go.opentelemetry.io/collector/pdata/ptrace"
@@ -20,6 +21,7 @@ type redisStorage struct {
 	logger                    *zap.Logger
 	redisClient               *redis.Client
 	redisCache                *cache.Cache
+	redisLock                 *redislock.Client
 	stopped                   bool
 	stoppedLock               sync.RWMutex
 	metricsCollectionInterval time.Duration
@@ -27,18 +29,54 @@ type redisStorage struct {
 
 var _ storage = (*redisStorage)(nil)
 
-const redisPrefix string = "dedup-Trace:"
+const redisPrefix string = "dedup-trace:"
+const redisLockPrefix string = "dedup-lock:"
 
 func newRedisStorage(logger *zap.Logger, redisClient *redis.Client) *redisStorage {
 	redisCache := cache.New(
 		&cache.Options{
 			Redis: redisClient,
 		})
+	redisLock := redislock.New(redisClient)
+
 	return &redisStorage{
 		logger:                    logger,
 		redisClient:               redisClient,
 		redisCache:                redisCache,
+		redisLock:                 redisLock,
 		metricsCollectionInterval: time.Second,
+	}
+}
+
+func (st *redisStorage) obtainLock(traceID pcommon.TraceID) *redislock.Lock {
+	backoff := redislock.LimitRetry(redislock.LinearBackoff(100*time.Millisecond), 10)
+
+	lock, err := st.redisLock.Obtain(
+		context.Background(),
+		redisLockPrefix+traceID.HexString(),
+		time.Second,
+		&redislock.Options{
+			RetryStrategy: backoff,
+		})
+
+	if errors.Is(err, redislock.ErrNotObtained) {
+		st.logger.Error("Could not obtain lock for trace", zap.String("traceID", traceID.HexString()), zap.Error(err))
+	} else if err != nil {
+		st.logger.Error("Error obtaining lock", zap.String("traceID", traceID.HexString()), zap.Error(err))
+	}
+
+	return lock
+}
+
+func (st *redisStorage) releaseLock(lock *redislock.Lock, traceID pcommon.TraceID) {
+	if lock == nil {
+		return
+	}
+
+	err := lock.Release(context.Background())
+
+	if err != nil {
+		st.logger.Error("Error releasing lock", zap.String("traceID", traceID.HexString()), zap.Error(err))
 	}
 }
 
@@ -48,8 +86,8 @@ func (st *redisStorage) getRedisKey(traceID pcommon.TraceID) string {
 
 func (st *redisStorage) getSendableTraceFromRedis(traceID pcommon.TraceID) (*SendableTrace, error) {
 	st.logger.Debug("Getting Trace from redis", zap.String("traceID", traceID.HexString()))
-	st.RLock()
-	defer st.RUnlock()
+	lock := st.obtainLock(traceID)
+	defer st.releaseLock(lock, traceID)
 
 	var sendableTrace SendableTrace
 	var marshalableSendableTrace MarshalableSendableTrace
@@ -71,8 +109,8 @@ func (st *redisStorage) getSendableTraceFromRedis(traceID pcommon.TraceID) (*Sen
 
 func (st *redisStorage) setSendableTraceInRedis(traceID pcommon.TraceID, sendableTrace SendableTrace) {
 	st.logger.Debug("Setting Trace in redis", zap.String("traceID", traceID.HexString()))
-	st.Lock()
-	defer st.Unlock()
+	lock := st.obtainLock(traceID)
+	defer st.releaseLock(lock, traceID)
 
 	marshalableSendableTrace := sendableTrace.ToMarshalableSendableTrace(st.logger)
 
@@ -90,8 +128,8 @@ func (st *redisStorage) setSendableTraceInRedis(traceID pcommon.TraceID, sendabl
 
 func (st *redisStorage) deleteSendableTraceFromRedis(traceID pcommon.TraceID) {
 	st.logger.Debug("Deleting Trace from redis", zap.String("traceID", traceID.HexString()))
-	st.Lock()
-	defer st.Unlock()
+	lock := st.obtainLock(traceID)
+	defer st.releaseLock(lock, traceID)
 	_ = st.redisCache.Delete(context.Background(), st.getRedisKey(traceID))
 }
 
@@ -110,8 +148,6 @@ func (st *redisStorage) countSendableTracesInRedis() int {
 
 func (st *redisStorage) createOrAppend(traceID pcommon.TraceID, td ptrace.Traces) error {
 	st.logger.Debug("CreateOrAppend", zap.String("traceID", traceID.HexString()))
-	//st.Lock()
-	//defer st.Unlock()
 
 	sendableTrace, err := st.getSendableTraceFromRedis(traceID)
 	if err != nil {

@@ -3,7 +3,7 @@ module github.com/open-telemetry/opentelemetry-collector-contrib/processor/group
 go 1.17
 
 require (
-	github.com/bluele/gcache v0.0.2
+	github.com/bsm/redislock v0.9.4
 	github.com/go-redis/cache/v9 v9.0.0
 	github.com/open-telemetry/opentelemetry-collector-contrib/pkg/batchpersignal v0.56.0
 	github.com/redis/go-redis/v9 v9.3.0

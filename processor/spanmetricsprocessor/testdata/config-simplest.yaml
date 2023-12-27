@@ -14,7 +14,7 @@ receivers:
 
 exporters:
   jaeger:
-    endpoint: "jaeger:14250"
+    endpoint: "127.0.0.1:14250"
     tls:
       insecure: true
 
@@ -35,7 +35,7 @@ processors:
       - name: "oxeye.call_stack"
         required: false
     store_on_redis: true
-    redis_address: "redis:6379"
+    redis_address: "127.0.0.1:6379"
     redis_password: ""
 
 
