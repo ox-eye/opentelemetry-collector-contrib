@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"github.com/redis/go-redis/v9"
+	"strconv"
 	"time"
 
 	"go.opencensus.io/stats/view"
@@ -39,8 +40,9 @@ const (
 	defaultDiscardOrphans       = false
 	defaultStoreOnDisk          = false
 	defaultStoreOnRedis         = false
-	defaultRedisAddress         = "127.0.0.1:6379"
-	defaultRedisPassword        = ""
+	defaultRedisHost            = "127.0.0.1"
+	defaultRedisPort            = 6379
+	defaultRedisAuth            = ""
 )
 
 var (
@@ -68,9 +70,10 @@ func createDefaultConfig() config.Processor {
 		NumWorkers:           defaultNumWorkers,
 		WaitDuration:         defaultWaitDuration,
 
-		StoreOnRedis:  defaultStoreOnRedis,
-		RedisAddress:  defaultRedisAddress,
-		RedisPassword: defaultRedisPassword,
+		StoreOnRedis: defaultStoreOnRedis,
+		RedisHost:    defaultRedisHost,
+		RedisPort:    defaultRedisPort,
+		RedisAuth:    defaultRedisAuth,
 
 		// not supported for now
 		DiscardOrphans: defaultDiscardOrphans,
@@ -99,8 +102,8 @@ func createTracesProcessor(
 	if oCfg.StoreOnRedis {
 		redisClient = redis.NewClient(
 			&redis.Options{
-				Addr:     oCfg.RedisAddress,
-				Password: oCfg.RedisPassword,
+				Addr:     oCfg.RedisHost + strconv.Itoa(oCfg.RedisPort),
+				Password: oCfg.RedisAuth,
 			})
 		st = newRedisStorage(params.Logger, redisClient)
 		params.Logger.Info("Connected to redis")

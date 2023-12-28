@@ -35,8 +35,9 @@ processors:
       - name: "oxeye.call_stack"
         required: false
     store_on_redis: true
-    redis_address: "127.0.0.1:6379"
-    redis_password: ""
+    redis_host: "127.0.0.1"
+    redis_port: 6379
+    redis_auth: ""
 
 
 service:
