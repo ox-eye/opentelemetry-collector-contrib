@@ -102,7 +102,7 @@ func createTracesProcessor(
 	if oCfg.StoreOnRedis {
 		redisClient = redis.NewClient(
 			&redis.Options{
-				Addr:     oCfg.RedisHost + strconv.Itoa(oCfg.RedisPort),
+				Addr:     oCfg.RedisHost + ":" + strconv.Itoa(oCfg.RedisPort),
 				Password: oCfg.RedisAuth,
 			})
 		st = newRedisStorage(params.Logger, redisClient)
