@@ -72,7 +72,7 @@ func newGroupByTraceProcessor(logger *zap.Logger, st storage, redisClient *redis
 	eventMachine := newEventMachine(logger, bufferSize, config.NumWorkers, config.NumTraces)
 
 	var traceUIDs *cache.Cache
-	if config.StoreOnRedis && redisClient != nil {
+	if config.StoreCacheOnRedis && redisClient != nil {
 		logger.Info("Creating redis cache")
 		traceUIDs = cache.New(&cache.Options{
 			Redis: redisClient,
