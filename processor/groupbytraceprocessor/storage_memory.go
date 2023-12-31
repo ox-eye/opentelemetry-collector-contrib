@@ -53,16 +53,14 @@ func (st *memoryStorage) createOrAppend(traceID pcommon.TraceID, td ptrace.Trace
 	td.ResourceSpans().CopyTo(newRss)
 	for i := 0; i < newRss.Len(); i++ {
 		rss := newRss.At(i)
-		for j := 0; j < rss.ScopeSpans().Len(); j++ {
-			for k := 0; k < rss.ScopeSpans().At(i).Spans().Len(); k++ {
-				if 0 < rss.ScopeSpans().At(i).Spans().At(k).Links().Len() {
-					shouldBeSent = true
-					for q := 0; q < rss.ScopeSpans().At(i).Spans().At(k).Links().Len(); q++ {
-						if !st.setSendState(rss.ScopeSpans().At(i).Spans().At(k).Links().At(q).TraceID(), true) {
-							cont := st.content[traceID]
-							cont.LinkedTraces = append(st.content[traceID].LinkedTraces, rss.ScopeSpans().At(i).Spans().At(k).Links().At(q).TraceID())
-							st.content[traceID] = cont
-						}
+		for k := 0; k < rss.ScopeSpans().At(i).Spans().Len(); k++ {
+			if 0 < rss.ScopeSpans().At(i).Spans().At(k).Links().Len() {
+				shouldBeSent = true
+				for q := 0; q < rss.ScopeSpans().At(i).Spans().At(k).Links().Len(); q++ {
+					if !st.setSendState(rss.ScopeSpans().At(i).Spans().At(k).Links().At(q).TraceID(), true) {
+						cont := st.content[traceID]
+						cont.LinkedTraces = append(st.content[traceID].LinkedTraces, rss.ScopeSpans().At(i).Spans().At(k).Links().At(q).TraceID())
+						st.content[traceID] = cont
 					}
 				}
 			}

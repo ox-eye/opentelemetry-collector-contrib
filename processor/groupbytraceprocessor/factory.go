@@ -39,7 +39,7 @@ const (
 	defaultNumWorkers           = 1
 	defaultDiscardOrphans       = false
 	defaultStoreOnDisk          = false
-	defaultStoreOnRedis         = false
+	defaultStoreCacheOnRedis    = false
 	defaultRedisHost            = "127.0.0.1"
 	defaultRedisPort            = 6379
 	defaultRedisAuth            = ""
@@ -70,10 +70,10 @@ func createDefaultConfig() config.Processor {
 		NumWorkers:           defaultNumWorkers,
 		WaitDuration:         defaultWaitDuration,
 
-		StoreOnRedis: defaultStoreOnRedis,
-		RedisHost:    defaultRedisHost,
-		RedisPort:    defaultRedisPort,
-		RedisAuth:    defaultRedisAuth,
+		StoreCacheOnRedis: defaultStoreCacheOnRedis,
+		RedisHost:         defaultRedisHost,
+		RedisPort:         defaultRedisPort,
+		RedisAuth:         defaultRedisAuth,
 
 		// not supported for now
 		DiscardOrphans: defaultDiscardOrphans,
@@ -99,18 +99,14 @@ func createTracesProcessor(
 		return nil, errDiscardOrphansNotSupported
 	}
 
-	if oCfg.StoreOnRedis {
+	if oCfg.StoreCacheOnRedis {
 		redisClient = redis.NewClient(
 			&redis.Options{
 				Addr:     oCfg.RedisHost + ":" + strconv.Itoa(oCfg.RedisPort),
 				Password: oCfg.RedisAuth,
 			})
-		st = newRedisStorage(params.Logger, redisClient)
-		params.Logger.Info("Connected to redis")
-	} else {
-		redisClient = nil
-		st = newMemoryStorage()
 	}
+	st = newMemoryStorage()
 
 	return newGroupByTraceProcessor(params.Logger, st, redisClient, nextConsumer, *oCfg), nil
 }
