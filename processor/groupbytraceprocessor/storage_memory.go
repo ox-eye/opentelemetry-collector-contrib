@@ -24,11 +24,6 @@ import (
 	"go.opentelemetry.io/collector/pdata/ptrace"
 )
 
-type SendableTrace struct {
-	trace        []ptrace.ResourceSpans
-	linkedTraces []pcommon.TraceID
-	shouldSend   bool
-}
 type memoryStorage struct {
 	sync.RWMutex
 	content                   map[pcommon.TraceID]SendableTrace
@@ -51,23 +46,21 @@ func (st *memoryStorage) createOrAppend(traceID pcommon.TraceID, td ptrace.Trace
 	defer st.Unlock()
 
 	// getting zero value is fine
-	content := st.content[traceID].trace
+	content := st.content[traceID].Trace
 	var shouldBeSent = false
 
 	newRss := ptrace.NewResourceSpansSlice()
 	td.ResourceSpans().CopyTo(newRss)
 	for i := 0; i < newRss.Len(); i++ {
 		rss := newRss.At(i)
-		for j := 0; j < rss.ScopeSpans().Len(); j++ {
-			for k := 0; k < rss.ScopeSpans().At(i).Spans().Len(); k++ {
-				if 0 < rss.ScopeSpans().At(i).Spans().At(k).Links().Len() {
-					shouldBeSent = true
-					for q := 0; q < rss.ScopeSpans().At(i).Spans().At(k).Links().Len(); q++ {
-						if !st.setSendState(rss.ScopeSpans().At(i).Spans().At(k).Links().At(q).TraceID(), true) {
-							cont := st.content[traceID]
-							cont.linkedTraces = append(st.content[traceID].linkedTraces, rss.ScopeSpans().At(i).Spans().At(k).Links().At(q).TraceID())
-							st.content[traceID] = cont
-						}
+		for k := 0; k < rss.ScopeSpans().At(i).Spans().Len(); k++ {
+			if 0 < rss.ScopeSpans().At(i).Spans().At(k).Links().Len() {
+				shouldBeSent = true
+				for q := 0; q < rss.ScopeSpans().At(i).Spans().At(k).Links().Len(); q++ {
+					if !st.setSendState(rss.ScopeSpans().At(i).Spans().At(k).Links().At(q).TraceID(), true) {
+						cont := st.content[traceID]
+						cont.LinkedTraces = append(st.content[traceID].LinkedTraces, rss.ScopeSpans().At(i).Spans().At(k).Links().At(q).TraceID())
+						st.content[traceID] = cont
 					}
 				}
 			}
@@ -75,7 +68,7 @@ func (st *memoryStorage) createOrAppend(traceID pcommon.TraceID, td ptrace.Trace
 		content = append(content, rss)
 	}
 	cont := st.content[traceID]
-	cont.trace = content
+	cont.Trace = content
 	st.content[traceID] = cont
 
 	if shouldBeSent {
@@ -92,7 +85,7 @@ func (st *memoryStorage) get(traceID pcommon.TraceID) ([]ptrace.ResourceSpans, e
 		return nil, nil
 	}
 
-	rss := sendable.trace
+	rss := sendable.Trace
 	var result []ptrace.ResourceSpans
 	for _, rs := range rss {
 		newRS := ptrace.NewResourceSpans()
@@ -111,8 +104,8 @@ func (st *memoryStorage) setLinkedSpans(traceID pcommon.TraceID) error {
 		return nil
 	}
 
-	for i := 0; i < len(sendable.linkedTraces); i++ {
-		st.setSendState(sendable.linkedTraces[i], true)
+	for i := 0; i < len(sendable.LinkedTraces); i++ {
+		st.setSendState(sendable.LinkedTraces[i], true)
 	}
 	return nil
 }
@@ -124,7 +117,7 @@ func (st *memoryStorage) setSendState(traceID pcommon.TraceID, sendState bool) b
 	if !ok {
 		return false
 	}
-	sendable.shouldSend = sendState
+	sendable.ShouldSend = sendState
 	st.content[traceID] = sendable
 	return true
 }
@@ -136,7 +129,7 @@ func (st *memoryStorage) getSendState(traceID pcommon.TraceID) bool {
 	if !ok {
 		return false
 	}
-	return sendable.shouldSend
+	return sendable.ShouldSend
 }
 
 // delete will return a reference to a ResourceSpans. Changes to the returned object may not be applied
@@ -146,7 +139,7 @@ func (st *memoryStorage) delete(traceID pcommon.TraceID) ([]ptrace.ResourceSpans
 	defer st.Unlock()
 
 	defer delete(st.content, traceID)
-	return st.content[traceID].trace, nil
+	return st.content[traceID].Trace, nil
 }
 
 func (st *memoryStorage) start() error {

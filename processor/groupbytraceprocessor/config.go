@@ -61,4 +61,9 @@ type Config struct {
 	StoreOnDisk bool `mapstructure:"store_on_disk"`
 
 	Hashfields []HashField `mapstructure:"hash_field"`
+
+	StoreCacheOnRedis bool   `mapstructure:"store_cache_on_redis"`
+	RedisHost         string `mapstructure:"redis_host"`
+	RedisPort         int    `mapstructure:"redis_port"`
+	RedisAuth         string `mapstructure:"redis_auth"`
 }
