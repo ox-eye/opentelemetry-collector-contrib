@@ -66,4 +66,6 @@ type Config struct {
 	RedisHost         string `mapstructure:"redis_host"`
 	RedisPort         int    `mapstructure:"redis_port"`
 	RedisAuth         string `mapstructure:"redis_auth"`
+	RedisTLS          bool   `mapstructure:"redis_tls"`
+	RedisCluster      bool   `mapstructure:"redis_cluster"`
 }

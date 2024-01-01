@@ -19,7 +19,6 @@ import (
 	"encoding/binary"
 	"fmt"
 	"github.com/go-redis/cache/v9"
-	"github.com/redis/go-redis/v9"
 	"hash/fnv"
 	"sort"
 	"strconv"
@@ -67,22 +66,9 @@ const bufferSize = 10_000
 const cachePrefix = "dedup-trace-uid:"
 
 // newGroupByTraceProcessor returns a new processor.
-func newGroupByTraceProcessor(logger *zap.Logger, st storage, redisClient *redis.Client, nextConsumer consumer.Traces, config Config) *groupByTraceProcessor {
+func newGroupByTraceProcessor(logger *zap.Logger, st storage, redisCache *cache.Cache, nextConsumer consumer.Traces, config Config) *groupByTraceProcessor {
 	// the event machine will buffer up to N concurrent events before blocking
 	eventMachine := newEventMachine(logger, bufferSize, config.NumWorkers, config.NumTraces)
-
-	var traceUIDs *cache.Cache
-	if config.StoreCacheOnRedis && redisClient != nil {
-		logger.Info("Creating redis cache")
-		traceUIDs = cache.New(&cache.Options{
-			Redis: redisClient,
-		})
-	} else {
-		logger.Info("Creating local cache")
-		traceUIDs = cache.New(&cache.Options{
-			LocalCache: cache.NewTinyLFU(bufferSize, config.DeduplicationTimeout),
-		})
-	}
 
 	sp := &groupByTraceProcessor{
 		logger:       logger,
@@ -90,7 +76,7 @@ func newGroupByTraceProcessor(logger *zap.Logger, st storage, redisClient *redis
 		config:       config,
 		eventMachine: eventMachine,
 		st:           st,
-		traceUIDs:    traceUIDs,
+		traceUIDs:    redisCache,
 	}
 
 	// register the callbacks
@@ -321,12 +307,16 @@ func (sp *groupByTraceProcessor) isDuplicate(trace ptrace.Traces) bool {
 	}
 
 	stats.Record(context.Background(), mNumOfDistinctTraces.M(1))
-	sp.traceUIDs.Set(&cache.Item{
+	err = sp.traceUIDs.Set(&cache.Item{
 		Ctx:   context.Background(),
 		Key:   cachePrefix + strconv.FormatUint(traceUid, 10),
 		Value: struct{}{},
 		TTL:   sp.config.DeduplicationTimeout,
 	})
+	if err != nil {
+		sp.logger.Error("Could not set trace in cache", zap.Error(err))
+	}
+
 	sp.logger.Debug("Trace isn't duplicate")
 	return false
 }
