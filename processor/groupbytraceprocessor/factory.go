@@ -16,8 +16,11 @@ package groupbytraceprocessor // import "github.com/open-telemetry/opentelemetry
 
 import (
 	"context"
+	"crypto/tls"
 	"fmt"
+	"github.com/go-redis/cache/v9"
 	"github.com/redis/go-redis/v9"
+	"go.uber.org/zap"
 	"strconv"
 	"time"
 
@@ -43,6 +46,8 @@ const (
 	defaultRedisHost            = "127.0.0.1"
 	defaultRedisPort            = 6379
 	defaultRedisAuth            = ""
+	defaultRedisTLS             = false
+	defaultRedisCluster         = false
 )
 
 var (
@@ -74,10 +79,127 @@ func createDefaultConfig() config.Processor {
 		RedisHost:         defaultRedisHost,
 		RedisPort:         defaultRedisPort,
 		RedisAuth:         defaultRedisAuth,
+		RedisTLS:          defaultRedisTLS,
+		RedisCluster:      defaultRedisCluster,
 
 		// not supported for now
 		DiscardOrphans: defaultDiscardOrphans,
 		StoreOnDisk:    defaultStoreOnDisk,
+	}
+}
+
+func configureRedisClientOptions(cfg config.Processor) *redis.Options {
+	oCfg := cfg.(*Config)
+	redisOptions := redis.Options{
+		Addr:     oCfg.RedisHost + ":" + strconv.Itoa(oCfg.RedisPort),
+		Password: oCfg.RedisAuth,
+	}
+
+	if oCfg.RedisTLS {
+		redisOptions.TLSConfig = &tls.Config{}
+	}
+
+	return &redisOptions
+}
+
+func configureRedisClusterOptions(cfg config.Processor) *redis.ClusterOptions {
+	oCfg := cfg.(*Config)
+	redisOptions := redis.ClusterOptions{
+		Addrs:          []string{oCfg.RedisHost + ":" + strconv.Itoa(oCfg.RedisPort)},
+		Password:       oCfg.RedisAuth,
+		ReadOnly:       false,
+		RouteRandomly:  false,
+		RouteByLatency: false,
+	}
+
+	if oCfg.RedisTLS {
+		redisOptions.TLSConfig = &tls.Config{}
+	}
+
+	return &redisOptions
+}
+
+func checkRedisConnection(redisClient *redis.Client, logger *zap.Logger) bool {
+	_, err := redisClient.Ping(context.Background()).Result()
+	if err != nil {
+		logger.Error("Could not connect to redis", zap.Error(err))
+		return false
+	} else {
+		logger.Info("Connected to redis")
+		return true
+	}
+}
+
+func checkRedisClusterConnection(redisClusterClient *redis.ClusterClient, logger *zap.Logger) bool {
+	_, err := redisClusterClient.Ping(context.Background()).Result()
+	if err != nil {
+		logger.Error("Could not connect to redis cluster", zap.Error(err))
+		return false
+	} else {
+		logger.Info("Connected to redis cluster")
+		return true
+	}
+}
+
+func connectRedisClient(cfg config.Processor, logger *zap.Logger) *redis.Client {
+	oCfg := cfg.(*Config)
+	if !oCfg.StoreCacheOnRedis {
+		return nil
+	}
+	redisClientOptions := configureRedisClientOptions(cfg)
+	redisClient := redis.NewClient(redisClientOptions)
+
+	if !checkRedisConnection(redisClient, logger) {
+		return nil
+	}
+	return redisClient
+}
+
+func connectRedisClusterClient(cfg config.Processor, logger *zap.Logger) *redis.ClusterClient {
+	oCfg := cfg.(*Config)
+	if !oCfg.StoreCacheOnRedis {
+		return nil
+	}
+	redisClusterOptions := configureRedisClusterOptions(cfg)
+	redisClusterClient := redis.NewClusterClient(redisClusterOptions)
+
+	if !checkRedisClusterConnection(redisClusterClient, logger) {
+		return nil
+	}
+	return redisClusterClient
+}
+
+func configureRedisCache(cfg config.Processor, logger *zap.Logger) *cache.Cache {
+	var redisClient *redis.Client
+	var redisClusterClient *redis.ClusterClient
+	oCfg := cfg.(*Config)
+
+	localCache := cache.New(&cache.Options{
+		LocalCache: cache.NewTinyLFU(bufferSize, oCfg.DeduplicationTimeout),
+	})
+
+	if !oCfg.StoreCacheOnRedis {
+		logger.Info("Creating local cache")
+		return localCache
+	}
+
+	logger.Info("Creating redis cache")
+	if oCfg.RedisCluster {
+		redisClusterClient = connectRedisClusterClient(cfg, logger)
+		if redisClusterClient == nil {
+			return localCache
+		}
+		return cache.New(&cache.Options{
+			Redis: redisClusterClient,
+		})
+	} else {
+		redisClient = connectRedisClient(cfg, logger)
+		if redisClient == nil {
+			return localCache
+		}
+		return cache.New(&cache.Options{
+			Redis: redisClient,
+		})
 	}
 }
 
@@ -90,7 +212,7 @@ func createTracesProcessor(
 	oCfg := cfg.(*Config)
 
 	var st storage
-	var redisClient *redis.Client
+	var redisCache *cache.Cache
 
 	if oCfg.StoreOnDisk {
 		return nil, errDiskStorageNotSupported
@@ -100,13 +222,9 @@ func createTracesProcessor(
 	}
 
 	if oCfg.StoreCacheOnRedis {
-		redisClient = redis.NewClient(
-			&redis.Options{
-				Addr:     oCfg.RedisHost + ":" + strconv.Itoa(oCfg.RedisPort),
-				Password: oCfg.RedisAuth,
-			})
+		redisCache = configureRedisCache(cfg, params.Logger)
 	}
 	st = newMemoryStorage()
 
-	return newGroupByTraceProcessor(params.Logger, st, redisClient, nextConsumer, *oCfg), nil
+	return newGroupByTraceProcessor(params.Logger, st, redisCache, nextConsumer, *oCfg), nil
 }
