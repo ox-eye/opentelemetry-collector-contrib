@@ -170,7 +170,7 @@ func connectRedisClusterClient(cfg config.Processor, logger *zap.Logger) *redis.
 	return redisClusterClient
 }
 
-func configureRedisCacheAndLock(cfg config.Processor, logger *zap.Logger) (*cache.Cache, *redislock.Client) {
+func configureCacheAndLock(cfg config.Processor, logger *zap.Logger) (*cache.Cache, *redislock.Client) {
 	var redisClient *redis.Client
 	var redisClusterClient *redis.ClusterClient
 	oCfg := cfg.(*Config)
@@ -227,9 +227,8 @@ func createTracesProcessor(
 		return nil, errDiscardOrphansNotSupported
 	}
 
-	if oCfg.StoreCacheOnRedis {
-		redisCache, redisLock = configureRedisCacheAndLock(cfg, params.Logger)
-	}
+	// This also handles when storeCacheOnRedis is false
+	redisCache, redisLock = configureCacheAndLock(cfg, params.Logger)
 	st = newMemoryStorage()
 
 	return newGroupByTraceProcessor(params.Logger, st, redisCache, redisLock, nextConsumer, *oCfg), nil
