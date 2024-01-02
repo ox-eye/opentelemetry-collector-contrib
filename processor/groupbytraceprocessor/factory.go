@@ -18,6 +18,7 @@ import (
 	"context"
 	"crypto/tls"
 	"fmt"
+	"github.com/bsm/redislock"
 	"github.com/go-redis/cache/v9"
 	"github.com/redis/go-redis/v9"
 	"go.uber.org/zap"
@@ -169,7 +170,7 @@ func connectRedisClusterClient(cfg config.Processor, logger *zap.Logger) *redis.
 	return redisClusterClient
 }
 
-func configureRedisCache(cfg config.Processor, logger *zap.Logger) *cache.Cache {
+func configureRedisCacheAndLock(cfg config.Processor, logger *zap.Logger) (*cache.Cache, *redislock.Client) {
 	var redisClient *redis.Client
 	var redisClusterClient *redis.ClusterClient
 	oCfg := cfg.(*Config)
@@ -180,26 +181,30 @@ func configureRedisCache(cfg config.Processor, logger *zap.Logger) *cache.Cache 
 
 	if !oCfg.StoreCacheOnRedis {
 		logger.Info("Creating local cache")
-		return localCache
+		return localCache, nil
 	}
 
 	logger.Info("Creating redis cache")
 	if oCfg.RedisCluster {
 		redisClusterClient = connectRedisClusterClient(cfg, logger)
 		if redisClusterClient == nil {
-			return localCache
+			return localCache, nil
 		}
-		return cache.New(&cache.Options{
+		redisCache := cache.New(&cache.Options{
 			Redis: redisClusterClient,
 		})
+		redisLock := redislock.New(redisClusterClient)
+		return redisCache, redisLock
 	} else {
 		redisClient = connectRedisClient(cfg, logger)
 		if redisClient == nil {
-			return localCache
+			return localCache, nil
 		}
-		return cache.New(&cache.Options{
+		redisCache := cache.New(&cache.Options{
 			Redis: redisClient,
 		})
+		redisLock := redislock.New(redisClient)
+		return redisCache, redisLock
 	}
 }
 
@@ -213,6 +218,7 @@ func createTracesProcessor(
 
 	var st storage
 	var redisCache *cache.Cache
+	var redisLock *redislock.Client
 
 	if oCfg.StoreOnDisk {
 		return nil, errDiskStorageNotSupported
@@ -222,9 +228,9 @@ func createTracesProcessor(
 	}
 
 	if oCfg.StoreCacheOnRedis {
-		redisCache = configureRedisCache(cfg, params.Logger)
+		redisCache, redisLock = configureRedisCacheAndLock(cfg, params.Logger)
 	}
 	st = newMemoryStorage()
 
-	return newGroupByTraceProcessor(params.Logger, st, redisCache, nextConsumer, *oCfg), nil
+	return newGroupByTraceProcessor(params.Logger, st, redisCache, redisLock, nextConsumer, *oCfg), nil
 }

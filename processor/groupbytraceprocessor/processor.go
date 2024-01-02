@@ -17,7 +17,9 @@ package groupbytraceprocessor // import "github.com/open-telemetry/opentelemetry
 import (
 	"context"
 	"encoding/binary"
+	"errors"
 	"fmt"
+	"github.com/bsm/redislock"
 	"github.com/go-redis/cache/v9"
 	"hash/fnv"
 	"sort"
@@ -58,15 +60,18 @@ type groupByTraceProcessor struct {
 
 	// the trace storage
 	st storage
+
+	redisLock *redislock.Client
 }
 
 var _ component.TracesProcessor = (*groupByTraceProcessor)(nil)
 
 const bufferSize = 10_000
 const cachePrefix = "dedup-trace-uid:"
+const cacheLockPrefix = "dedup-trace-uid-lock:"
 
 // newGroupByTraceProcessor returns a new processor.
-func newGroupByTraceProcessor(logger *zap.Logger, st storage, redisCache *cache.Cache, nextConsumer consumer.Traces, config Config) *groupByTraceProcessor {
+func newGroupByTraceProcessor(logger *zap.Logger, st storage, redisCache *cache.Cache, redisLock *redislock.Client, nextConsumer consumer.Traces, config Config) *groupByTraceProcessor {
 	// the event machine will buffer up to N concurrent events before blocking
 	eventMachine := newEventMachine(logger, bufferSize, config.NumWorkers, config.NumTraces)
 
@@ -77,6 +82,7 @@ func newGroupByTraceProcessor(logger *zap.Logger, st storage, redisCache *cache.
 		eventMachine: eventMachine,
 		st:           st,
 		traceUIDs:    redisCache,
+		redisLock:    redisLock,
 	}
 
 	// register the callbacks
@@ -86,6 +92,41 @@ func newGroupByTraceProcessor(logger *zap.Logger, st storage, redisCache *cache.
 	eventMachine.onTraceRemoved = sp.onTraceRemoved
 
 	return sp
+}
+
+func (sp *groupByTraceProcessor) obtainLock(lockKey string) *redislock.Lock {
+	if sp.redisLock == nil {
+		return nil
+	}
+	backoff := redislock.LimitRetry(redislock.LinearBackoff(100*time.Millisecond), 10)
+
+	lock, err := sp.redisLock.Obtain(
+		context.Background(),
+		cacheLockPrefix+lockKey,
+		time.Second,
+		&redislock.Options{
+			RetryStrategy: backoff,
+		})
+
+	if errors.Is(err, redislock.ErrNotObtained) {
+		sp.logger.Error("Could not obtain lock for trace", zap.String("lockKey", lockKey), zap.Error(err))
+	} else if err != nil {
+		sp.logger.Error("Error obtaining lock", zap.String("lockKey", lockKey), zap.Error(err))
+	}
+
+	return lock
+}
+
+func (sp *groupByTraceProcessor) releaseLock(lock *redislock.Lock, lockKey string) {
+	if lock == nil || sp.redisLock == nil {
+		return
+	}
+
+	err := lock.Release(context.Background())
+
+	if err != nil {
+		sp.logger.Error("Error releasing lock", zap.String("lockKey", lockKey), zap.Error(err))
+	}
 }
 
 func (sp *groupByTraceProcessor) ConsumeTraces(_ context.Context, td ptrace.Traces) error {
@@ -298,8 +339,13 @@ func (sp *groupByTraceProcessor) isDuplicate(trace ptrace.Traces) bool {
 	h := fnv.New64()
 	h.Write(uid)
 	traceUid := h.Sum64()
+	traceUidString := strconv.FormatUint(traceUid, 10)
+	cacheKey := cachePrefix + traceUidString
 
-	err := sp.traceUIDs.Get(context.Background(), cachePrefix+strconv.FormatUint(traceUid, 10), nil)
+	lock := sp.obtainLock(traceUidString)
+	defer sp.releaseLock(lock, traceUidString)
+
+	err := sp.traceUIDs.Get(context.Background(), cacheKey, nil)
 	if err == nil {
 		stats.Record(context.Background(), mDeDuplicatedTraces.M(1))
 		sp.logger.Debug("Trace is duplicate")
@@ -309,7 +355,7 @@ func (sp *groupByTraceProcessor) isDuplicate(trace ptrace.Traces) bool {
 	stats.Record(context.Background(), mNumOfDistinctTraces.M(1))
 	err = sp.traceUIDs.Set(&cache.Item{
 		Ctx:   context.Background(),
-		Key:   cachePrefix + strconv.FormatUint(traceUid, 10),
+		Key:   cacheKey,
 		Value: struct{}{},
 		TTL:   sp.config.DeduplicationTimeout,
 	})
