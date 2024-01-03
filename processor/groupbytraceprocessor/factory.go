@@ -141,10 +141,6 @@ func checkRedisClusterConnection(redisClusterClient *redis.ClusterClient, logger
 }
 
 func connectRedisClient(cfg config.Processor, logger *zap.Logger) (*redis.Client, error) {
-	oCfg := cfg.(*Config)
-	if !oCfg.StoreCacheOnRedis {
-		return nil, nil
-	}
 	redisClientOptions := configureRedisClientOptions(cfg)
 	redisClient := redis.NewClient(redisClientOptions)
 	err := checkRedisConnection(redisClient, logger)
@@ -156,10 +152,6 @@ func connectRedisClient(cfg config.Processor, logger *zap.Logger) (*redis.Client
 }
 
 func connectRedisClusterClient(cfg config.Processor, logger *zap.Logger) (*redis.ClusterClient, error) {
-	oCfg := cfg.(*Config)
-	if !oCfg.StoreCacheOnRedis {
-		return nil, nil
-	}
 	redisClusterOptions := configureRedisClusterOptions(cfg)
 	redisClusterClient := redis.NewClusterClient(redisClusterOptions)
 	err := checkRedisClusterConnection(redisClusterClient, logger)
@@ -188,7 +180,7 @@ func configureCacheAndLock(cfg config.Processor, logger *zap.Logger) (*cache.Cac
 	logger.Info("Creating redis cache")
 	if oCfg.RedisCluster {
 		redisClusterClient, err = connectRedisClusterClient(cfg, logger)
-		if redisClusterClient == nil || err != nil {
+		if err != nil {
 			logger.Error("Error connecting to redis cluster. Using local cache", zap.Error(err))
 			return localCache, nil
 		}
@@ -199,7 +191,7 @@ func configureCacheAndLock(cfg config.Processor, logger *zap.Logger) (*cache.Cac
 		return redisCache, redisLock
 	} else {
 		redisClient, err = connectRedisClient(cfg, logger)
-		if redisClient == nil || err != nil {
+		if err != nil {
 			logger.Error("Error connecting to redis. Using local cache", zap.Error(err))
 			return localCache, nil
 		}
