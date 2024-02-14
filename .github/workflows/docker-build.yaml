@@ -6,27 +6,25 @@ on:
     tags: ["v*"]
   pull_request:
     branches: [main]
-permissions:
-  id-token: write
-  contents: read
+
 jobs:
   docker-build:
-    runs-on: ubuntu-22.04
+    runs-on: private
+    permissions:
+      contents: read
     steps:
         - uses: actions/checkout@v3
         - uses: docker/setup-buildx-action@v2
-        - uses: aws-actions/configure-aws-credentials@v1
+        - uses: docker/login-action@v3
           with:
-            role-to-assume: ${{ secrets.AWS_IAM_ROLE }}
-            role-session-name: github-${{ github.repository_id }}-${{ github.triggering_actor }}
-            aws-region: ${{ secrets.AWS_REGION }}
-        - uses: aws-actions/amazon-ecr-login@v1
-          id: login-ecr
+            registry: ${{ secrets.OXEYE_REGISTRY }}
+            username: ${{ secrets.OXEYE_REGISTRY_USERNAME }}
+            password: ${{ secrets.OXEYE_REGISTRY_PASSWORD }}
         - name: Docker meta
           id: meta
           uses: docker/metadata-action@v4
           with:
-            images: ${{ steps.login-ecr.outputs.registry }}/dp-otel-collector-deduplicator
+            images: ${{ secrets.OXEYE_REGISTRY }}/dp-otel-collector-deduplicator
             tags: |
               type=sha,format=long,prefix=sha-
               type=ref,event=branch
